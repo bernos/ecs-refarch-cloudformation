@@ -1,0 +1,16 @@
+version: '2'
+services:
+  product-service:
+    image: 275396840892.dkr.ecr.us-east-1.amazonaws.com/ecs-refarch-cloudformation/product-service:1.0.0
+    cpu_shares: 100
+    mem_limit: 127000000
+    environment:
+      URL: ${LoadBalancerUrl}/products
+    ports:
+      - "0:8001"
+    logging:
+      driver: awslogs
+      options:
+        awslogs-group: ${CloudWatchLogsGroup}
+        awslogs-region: ${AWS_REGION}
+      
