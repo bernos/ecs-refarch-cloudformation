@@ -3,11 +3,12 @@ if [ -z "$1" ]; then
     echo "Error: No environment specified. Usage: use-environment.sh <environment-name>"
 else
 
-    conf="./$1.env"
+    conf="./.ecso/infrastructure/$1.env"
 
     if [ ! -f "$conf" ]; then
         echo "Error: No environment configuration found at $conf"
     else
+        . "./.ecso/project.conf"
         . "$conf"
 
         export ENVIRONMENT=$1
@@ -26,4 +27,3 @@ else
                 --cluster $CLUSTER_NAME
     fi
 fi
-

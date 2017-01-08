@@ -5,6 +5,8 @@ elif [ -z "$ENVIRONMENT" ]; then
     echo "ERROR: \$ENVIRONMENT must be set. Have you run use-environment?"
 else
 
+    . "./.ecso/project.conf"
+
     conf="./services/$1/$ENVIRONMENT.env"
 
     if [ ! -f "$conf" ]; then

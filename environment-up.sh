@@ -61,6 +61,14 @@ EOF
     exit
 }
 
+set -e -o pipefail
+trap 'errorTrap ${LINENO}' ERR
+
+#-------------------------------------------------------------------------------
+# Includes
+#-------------------------------------------------------------------------------
+. common.sh
+
 #-------------------------------------------------------------------------------
 # Defaults
 #
@@ -68,7 +76,7 @@ EOF
 # ./<environment>.env
 #-------------------------------------------------------------------------------
 : ${AWS_REGION:="ap-southeast-2"}
-: ${TEMPLATE_FILE:="infrastructure/stack.yaml"}
+: ${TEMPLATE_FILE:=".ecso/infrastructure/templates/stack.yaml"}
 
 #-------------------------------------------------------------------------------
 # Parse cli options
@@ -118,9 +126,12 @@ done
 
 : ${ENVIRONMENT:?"ERROR: Environment name not provided"}
 
-conf="./$ENVIRONMENT.env"
+. "./.ecso/project.conf"
+
+conf="./.ecso/infrastructure/${ENVIRONMENT}.env"
 
 if [ -f "$conf" ]; then
+    ENV_CONFIG_FOUND=1
     . "$conf"
 fi
 
@@ -145,24 +156,57 @@ AWS_REGION=${OPT_AWS_REGION:-$AWS_REGION}
 : ${ALB_SUBNETS:?"ERROR: ALB subnets not provided."}
 : ${AWS_REGION:?"ERROR: Region not provided"}
 
-BUCKET=seek-ca-$AWS_REGION-$AWS_ACCOUNT_ID
 CLUSTER_NAME=$PROJECT-$ENVIRONMENT
+BUCKET=seek-ca-$AWS_REGION-$AWS_ACCOUNT_ID
+BUCKET_PREFIX=$CLUSTER_NAME/infrastructure
+PACKAGED_TEMPLATE=/tmp/$CLUSTER_NAME-infrastructure.yaml
 
-set -e
+#-------------------------------------------------------------------------------
+
+if [ "$(getStackCount $CLUSTER_NAME $AWS_REGION)" = "0" ]; then
+    bannerBlue "Creating ${ENVIRONMENT} environment."
+else
+    bannerBlue "Updating ${ENVIRONMENT} environment."
+fi
+
+if [ "$ENV_CONFIG_FOUND" = "1" ]; then
+    info "Using environment configuration from ${conf}"
+else
+    warn "No environment configuration found at ${conf}"
+fi
+
+info "Environment will be deployed to VPC ${VPC_ID} in AWS account ${AWS_ACCOUNT_ID}"
+info "Packaging cloudformation template ${TEMPLATE_FILE}"
+info "Templates will be uploaded to s3://${BUCKET}/${BUCKET_PREFIX}"
 
 # Package up the main stack. We need to do the extra sed step to work
 # around https://github.com/aws/aws-cli/issues/2314
 aws cloudformation package \
     --template-file $TEMPLATE_FILE \
     --s3-bucket $BUCKET \
-    --s3-prefix $CLUSTER_NAME/infrastructure | \
+    --s3-prefix $BUCKET_PREFIX | \
     sed 's/s3:\/\//https:\/\/s3.amazonaws.com\//g' > \
-        /tmp/$CLUSTER_NAME-infrastructure.yaml
+        $PACKAGED_TEMPLATE || error "Failed to package cloudformation template."
 
 # Now deploy the main stack template
+info "Deploying packaged template ${PACKAGED_TEMPLATE}." && echo ""
+
 aws cloudformation deploy \
     --stack-name $CLUSTER_NAME \
     --parameter-overrides VPC=$VPC_ID InstanceSubnets=$INSTANCE_SUBNETS ALBSubnets=$ALB_SUBNETS \
-    --template-file /tmp/$CLUSTER_NAME-infrastructure.yaml \
+    --template-file $PACKAGED_TEMPLATE \
     --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
-    --region $AWS_REGION
+    --region $AWS_REGION || error "Failed to deploy cloudformation template."
+
+echo ""
+
+exportStackOutputs $CLUSTER_NAME
+
+stackId=$(getStackId $CLUSTER_NAME $AWS_REGION)
+
+bannerGreen "Successfully deployed stack for $ENVIRONMENT environment to cloudformation stack $CLUSTER_NAME"
+
+dt "Load balancer" "http://${LoadBalancerUrl}"
+dt "Cloudformation console" "$(getStackConsoleUrl $CLUSTER_NAME $AWS_REGION)"
+dt "ECS console" "$(getECSClusterConsoleUrl $CLUSTER_NAME $AWS_REGION)"
+

@@ -35,6 +35,11 @@ EOF
 }
 
 #-------------------------------------------------------------------------------
+# Includes
+#-------------------------------------------------------------------------------
+. common.sh
+
+#-------------------------------------------------------------------------------
 # Defaults
 #
 # These defaults can be overriden for each environment in
@@ -87,28 +92,14 @@ AWS_REGION=${OPT_AWS_REGION:-$AWS_REGION}
 : ${CLUSTER_NAME:?"ERROR: No cluster name provided."}
 
 SERVICE_STACK_NAME=$CLUSTER_NAME-$SERVICE_NAME
+COMPOSE_FILE=${COMPOSE_FILE:-./services/$SERVICE_NAME/docker-compose.yaml}
 
 #-------------------------------------------------------------------------------
 
-exportStackOutputs() {
-    local OUTPUTS=$(aws cloudformation describe-stacks \
-                        --stack-name $1 \
-                        --region $AWS_REGION \
-                        --query "Stacks[].Outputs[].{OutputKey:OutputKey,OutputValue:OutputValue}" \
-                        --output text)
+set -e -o pipefail
+trap 'errorTrap ${LINENO}' ERR
 
-    while read line
-    do
-        name=`echo $line | cut -d' ' -f1`
-        value=`echo $line | cut -d' ' -f2`
-
-        export $name=$value
-    done <<< "$(echo -e "$OUTPUTS")"
-}
-
-#-------------------------------------------------------------------------------
-
-set -e
+info "Terminating service $SERVICE_NAME..."
 
 #-------------------------------------------------------------------------------
 # Export outputs from the cluster cfn stack as env vars
@@ -116,21 +107,32 @@ set -e
 exportStackOutputs $CLUSTER_NAME
 exportStackOutputs $SERVICE_STACK_NAME
 
-ecs-cli configure \
-    --region $AWS_REGION \
-    --compose-project-name-prefix "" \
-    --compose-service-name-prefix "" \
-    --cluster $CLUSTER_NAME
+#-------------------------------------------------------------------------------
+# Bring the ecs service down
+#-------------------------------------------------------------------------------
+servicecount=$(getServiceCount $SERVICE_NAME $CLUSTER_NAME $AWS_REGION)
 
-ecs-cli compose \
-    --file ./services/$SERVICE_NAME/docker-compose.yaml \
-    --project-name $SERVICE_NAME \
-    service rm
+if [ "$servicecount" != "0" ]; then
+    if [ -f "$COMPOSE_FILE" ]; then
+        info "Removing service with ecs-cli compose..." && echo ""
+        ecs-cli configure \
+                --region $AWS_REGION \
+                --compose-project-name-prefix "" \
+                --compose-service-name-prefix "" \
+                --cluster $CLUSTER_NAME
 
-aws cloudformation delete-stack \
-    --stack-name $SERVICE_STACK_NAME \
-    --region $AWS_REGION
+        ecs-cli compose \
+            --file "$COMPOSE_FILE" \
+            --project-name $SERVICE_NAME \
+            service rm
 
-aws cloudformation wait stack-delete-complete \
-    --stack-name $SERVICE_STACK_NAME \
-    --region $AWS_REGION
+        echo ""
+    fi
+fi
+
+#-------------------------------------------------------------------------------
+# Delete the service cfn stack
+#-------------------------------------------------------------------------------
+deleteStack $SERVICE_STACK_NAME $AWS_REGION
+
+info "Service $SERVICE_NAME was successfully terminated."

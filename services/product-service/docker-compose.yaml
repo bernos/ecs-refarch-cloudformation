@@ -1,16 +1,21 @@
 version: '2'
+
+volumes:
+  nginxdata: {}
+
 services:
-  product-service:
-    image: 275396840892.dkr.ecr.us-east-1.amazonaws.com/ecs-refarch-cloudformation/product-service:1.0.0
-    cpu_shares: 100
-    mem_limit: 127000000
-    environment:
-      URL: ${LoadBalancerUrl}/products
+  nginx:
+    image: nginx:latest
+    mem_limit: 20000000
     ports:
-      - "0:8001"
-    logging:
-      driver: awslogs
-      options:
-        awslogs-group: ${CloudWatchLogsGroup}
-        awslogs-region: ${AWS_REGION}
-      
+      - "8080:80"
+    volumes:
+      - nginxdata:/usr/share/nginx/html/:ro
+  instance-id-getter:
+    image: busybox:latest
+    mem_limit: 10000000
+    environment:
+      - MYVAR=${MYVAR}
+    volumes:
+      - nginxdata:/nginx
+    command: sh -c "while true; do echo \"Hello world <p><pre> `env` </pre></p> \" > /nginx/index.html; sleep 3; done"

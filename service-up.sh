@@ -76,6 +76,14 @@ EOF
     exit
 }
 
+set -e -o pipefail
+trap 'errorTrap ${LINENO}' ERR
+
+#-------------------------------------------------------------------------------
+# Includes
+#-------------------------------------------------------------------------------
+. common.sh
+
 #-------------------------------------------------------------------------------
 # Defaults
 #
@@ -141,6 +149,7 @@ done
 conf="./services/$SERVICE_NAME/$ENVIRONMENT.env"
 
 if [ -f "$conf" ]; then
+    SERVICE_CONFIG_FOUND=1
     . "$conf"
 fi
 
@@ -171,29 +180,22 @@ fi
 
 TASK_NAME="$CLUSTER_NAME-$SERVICE_NAME"
 SERVICE_STACK_NAME=$CLUSTER_NAME-$SERVICE_NAME
-
-#-------------------------------------------------------------------------------
-# Exports all the outputs of a cloudformation stack as environment variables
-#-------------------------------------------------------------------------------
-exportStackOutputs() {
-    local OUTPUTS=$(aws cloudformation describe-stacks \
-                  --stack-name $1 \
-                  --region $AWS_REGION \
-                  --query "Stacks[].Outputs[].{OutputKey:OutputKey,OutputValue:OutputValue}" \
-                  --output text)
-
-    while read line
-    do
-        name=`echo $line | cut -d' ' -f1`
-        value=`echo $line | cut -d' ' -f2`
-
-        export $name=$value
-    done <<< "$(echo -e "$OUTPUTS")"
-}
+SERVICE_TEMPLATE=./.ecso/services/$SERVICE_NAME/resources.yaml
+COMPOSE_FILE=${COMPOSE_FILE:-./services/$SERVICE_NAME/docker-compose.yaml}
 
 #-------------------------------------------------------------------------------
 
-set -e
+if [ "$(getStackCount $SERVICE_STACK_NAME $AWS_REGION)" = "0" ]; then
+    bannerBlue "Creating the ${SERVICE_NAME} service in the ${ENVIRONMENT} environment."
+else
+    bannerBlue "Updating the ${SERVICE_NAME} service in the ${ENVIRONMENT} environment."
+fi
+
+if [ "$SERVICE_CONFIG_FOUND" = "1" ]; then
+    info "Using service configuration from ${conf}"
+else
+    warn "No service configuration found at ${conf}"
+fi
 
 #-------------------------------------------------------------------------------
 # Export outputs from the cluster cfn stack as env vars
@@ -201,44 +203,54 @@ set -e
 exportStackOutputs $CLUSTER_NAME
 
 #-------------------------------------------------------------------------------
-# Deploy the service resources cfn stack
+# Deploy the service resources cfn stack. Cloudformation deploy actually
+# errors if there are no changes to deploy, so for now we will just || true
 #-------------------------------------------------------------------------------
+info "Deploying cloudformation stack for the ${SERVICE_NAME} service."
+info "Using template ${SERVICE_TEMPLATE}"
+info "Deploying to the ${SERVICE_STACK_NAME} stack."
+
 if [ -n "$ROUTE_PATH" ]; then
+    info "The ${SERVICE_NAME} service will be registered with the load balancer at ${ROUTE_PATH}"
+
+    echo ""
+
     aws cloudformation deploy \
         --stack-name $SERVICE_STACK_NAME \
         --parameter-overrides VPC=$VPC Listener=$Listener Path=$ROUTE_PATH \
-        --template-file services/$SERVICE_NAME/resources.yaml \
+        --template-file $SERVICE_TEMPLATE \
         --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
-        --region $AWS_REGION
+        --region $AWS_REGION || true
 else
+    echo ""
+
     aws cloudformation deploy \
         --stack-name $SERVICE_STACK_NAME \
-        --template-file services/$SERVICE_NAME/resources.yaml \
+        --template-file $SERVICE_TEMPLATE \
         --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
-        --region $AWS_REGION
+        --region $AWS_REGION || true
 fi
+
+echo ""
 
 exportStackOutputs $SERVICE_STACK_NAME
 
 #-------------------------------------------------------------------------------
 # Create the task definition using ecs-cli compose
 #-------------------------------------------------------------------------------
-ecs-cli compose \
-    --file services/$SERVICE_NAME/docker-compose.yaml \
-    --project-name $TASK_NAME \
-    create
+info "Registering ${TASK_NAME} ecs task."
+info "Using ${COMPOSE_FILE}" && echo ""
 
-servicecount=$(aws ecs describe-services \
-    --cluster $CLUSTER_NAME \
-    --services $SERVICE_NAME \
-    --query "length(services[?status == 'ACTIVE'])" \
-    --region $AWS_REGION)
+ecs-cli compose \
+    --file $COMPOSE_FILE \
+    --project-name $TASK_NAME \
+    create && echo ""
 
 #-------------------------------------------------------------------------------
 # Create/Update the service
 #-------------------------------------------------------------------------------
-if [ "$servicecount" = "0" ]; then
-    echo "Creating service $SERVICE_NAME"
+if [ "$(getServiceCount $SERVICE_NAME $CLUSTER_NAME $AWS_REGION)" = "0" ]; then
+    info "Creating a new $SERVICE_NAME ecs service." && echo ""
 
     if [ -n "$ROUTE_PATH" ]; then
         aws ecs create-service \
@@ -259,7 +271,7 @@ if [ "$servicecount" = "0" ]; then
             --region $AWS_REGION
     fi
 else
-    echo "Updating service $SERVICE_NAME"
+    info "Updating the existing $SERVICE_NAME ecs service." && echo ""
 
     aws ecs update-service \
         --cluster $CLUSTER_NAME \
@@ -269,12 +281,26 @@ else
         --region $AWS_REGION
 fi
 
+echo ""
+
 #-------------------------------------------------------------------------------
 # Wait for deployment to complete
 #-------------------------------------------------------------------------------
-echo "Waiting for service to be stable..."
+info "Waiting for service to be stable..."
 
 aws ecs wait services-stable \
     --cluster $CLUSTER_NAME \
     --services $SERVICE_NAME \
     --region $AWS_REGION
+
+stackId=$(getStackId $SERVICE_STACK_NAME $AWS_REGION)
+
+bannerGreen "Successfully deployed the ${SERVICE_NAME} service the the ${ENVIRONMENT} environment."
+
+if [ -n "$ROUTE_PATH" ]; then
+    dt "Service url" "http://${LoadBalancerUrl}${ROUTE_PATH}"
+fi
+
+dt "Cloudformation console" "$(getStackConsoleUrl $SERVICE_STACK_NAME $AWS_REGION)"
+dt "ECS service console" "$(getECSServiceConsoleUrl $SERVICE_NAME $CLUSTER_NAME $AWS_REGION)"
+

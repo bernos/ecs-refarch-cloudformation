@@ -61,6 +61,13 @@ Outputs:
         Description: The VPC ID
         Value: !Ref VPC
 
+    Cluster:
+        Description: A reference to the ECS cluster.
+        Value:
+          Fn::GetAtt:
+            - ECS
+            - Outputs.Cluster
+
     LoadBalancer:
         Description: A reference to the application load balancer.
         Value:
