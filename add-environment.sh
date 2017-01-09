@@ -5,7 +5,7 @@ NAME:
     add-environment
 
 DESCRIPTION:
-    Adds a new ecso managed environment
+    Adds a new ecso managed environment to the project
 
 SYNOPSIS:
     ecso.sh add-environment
@@ -54,6 +54,7 @@ trap 'errorTrap ${LINENO}' ERR
 #-------------------------------------------------------------------------------
 : ${AWS_REGION:="ap-southeast-2"}
 : ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"}
+: ${CURRENT_AWS_ACCOUNT:="$(aws sts get-caller-identity --output text --query 'Account' 2>/dev/null)"}
 
 #-------------------------------------------------------------------------------
 # Includes
@@ -102,8 +103,11 @@ do
     shift # past argument or value
 done
 
+#-------------------------------------------------------------------------------
+# Source the ecso project configuration
+#-------------------------------------------------------------------------------
 if ! [ -f "./.ecso/project.conf" ]; then
-    error "This dir does not appear to be in an ecso project. Run ecso init first."
+    error "The current directory does not appear to contain an ecso project. Run ecso init first."
 else
     . "./.ecso/project.conf"
 fi
@@ -117,18 +121,49 @@ if [ -z "$OPT_ENVIRONMENT" ]; then
     : ${OPT_ENVIRONMENT:="dev"}
 fi
 
-if [ -z "$OPT_AWS_ACCOUNT_ID" ]; then
-    default_account="$(aws sts get-caller-identity --output text --query 'Account' 2>/dev/null)"
+# Ensure that there is not already an environment with the same name defined
+# before wasting time asking for more options
+ENV_CONFIG="./.ecso/environments/${OPT_ENVIRONMENT}/config.env"
+ENV_ACTIVATE="./.ecso/environments/${OPT_ENVIRONMENT}/activate"
 
-    if [ -z "$default_account" ]; then
+if [ -f "${ENV_CONFIG}" ]; then
+    error "This project already contains and environment named ${OPT_ENVIRONMENT}"
+fi
+
+if [ -z "$OPT_AWS_ACCOUNT_ID" ]; then
+    if [ -z "$CURRENT_AWS_ACCOUNT" ]; then
         prompt "Enter the ID of the AWS account to create the environment in"
     else
-        prompt "Enter the ID of the AWS account to create the environment in ($default_account)"
+        prompt "Enter the ID of the AWS account to create the environment in ($CURRENT_AWS_ACCOUNT)"
     fi
 
     read OPT_AWS_ACCOUNT_ID
 
-    : ${OPT_AWS_ACCOUNT_ID:=$default_account}
+    : ${OPT_AWS_ACCOUNT_ID:=$CURRENT_AWS_ACCOUNT}
+fi
+
+if [ -z "$OPT_AWS_REGION" ]; then
+    prompt "Enter the AWS region to create the environment in (ap-southeast-2)"
+    read OPT_AWS_REGION
+    : ${OPT_AWS_REGION:="ap-southeast-2"}
+fi
+
+if [ -f "${ECSO_DIR}/accounts/${OPT_AWS_ACCOUNT_ID}.env" ]; then
+    printf "${_bold}Would you like to use the default VPC and subnets for AWS account ${OPT_AWS_ACCOUNT_ID}?${_nc}\n"
+
+    select use_defaults in "Yes" "No"; do
+        if [ "$use_defaults" = "Yes" ]; then
+           . "${ECSO_DIR}/accounts/${OPT_AWS_ACCOUNT_ID}.env"
+
+           echo ""
+
+           info "Using vpc ${OPT_VPC_ID}"
+           info "Using instance subnets ${OPT_INSTANCE_SUBNETS}"
+           info "Using load balancer subnets ${OPT_ALB_SUBNETS}"
+        fi
+        break
+    done
+
 fi
 
 if [ -z "$OPT_VPC_ID" ]; then
@@ -146,11 +181,6 @@ if [ -z "$OPT_ALB_SUBNETS" ]; then
     read OPT_ALB_SUBNETS
 fi
 
-if [ -z "$OPT_AWS_REGION" ]; then
-    prompt "Enter the AWS region to create the environment in"
-    read OPT_AWS_REGION
-fi
-
 #-------------------------------------------------------------------------------
 # Validate options
 #-------------------------------------------------------------------------------
@@ -160,16 +190,6 @@ fi
 : ${OPT_INSTANCE_SUBNETS:?"ERROR: Instance subnets not provided."}
 : ${OPT_ALB_SUBNETS:?"ERROR: ALB subnets not provided."}
 : ${OPT_AWS_REGION:?"ERROR: Region not provided"}
-
-#-------------------------------------------------------------------------------
-# Ensure that there is not already an environment with the same name defined
-#-------------------------------------------------------------------------------
-ENV_CONFIG="./.ecso/environments/${OPT_ENVIRONMENT}/config.env"
-ENV_ACTIVATE="./.ecso/environments/${OPT_ENVIRONMENT}/activate"
-
-if [ -f "${ENV_CONFIG}" ]; then
-    error "This project already contains and environment named ${OPT_ENVIRONMENT}"
-fi
 
 bannerBlue "Adding environment ${OPT_ENVIRONMENT} to ${PROJECT}"
 
