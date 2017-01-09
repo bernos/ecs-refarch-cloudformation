@@ -31,7 +31,7 @@ shift
 
 if [ "$CMD" = "help" ]; then
     usage
-elif [ -f "${ECSO_DIR}/${CMD}.sh" ]; then
+elif [ -f "${ECSO_DIR}/commands/${CMD}.sh" ]; then
     . "${ECSO_DIR}/${CMD}.sh"
 else
     echo "Unknown command ${CMD}"
