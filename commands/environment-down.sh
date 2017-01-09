@@ -53,7 +53,7 @@ trap 'errorTrap ${LINENO}' ERR
 #-------------------------------------------------------------------------------
 : ${AWS_REGION:="ap-southeast-2"}
 : ${TEMPLATE_FILE:=".ecso/infrastructure/templates/stack.yaml"}
-: ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"}
+: ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../" && pwd )"}
 
 #-------------------------------------------------------------------------------
 # Includes

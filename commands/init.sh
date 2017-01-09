@@ -28,7 +28,7 @@ trap 'errorTrap ${LINENO}' ERR
 # These defaults can be overriden for each environment in
 # ./<environment>.env
 #-------------------------------------------------------------------------------
-: ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"}
+: ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../" && pwd )"}
 
 #-------------------------------------------------------------------------------
 # Includes

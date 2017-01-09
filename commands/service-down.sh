@@ -41,7 +41,7 @@ EOF
 # ./services/<service>/<environment>.env
 #-------------------------------------------------------------------------------
 : ${AWS_REGION:="ap-southeast-2"}
-: ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"}
+: ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../" && pwd )"}
 
 #-------------------------------------------------------------------------------
 # Includes

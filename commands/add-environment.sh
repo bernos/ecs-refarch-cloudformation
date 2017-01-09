@@ -53,7 +53,7 @@ trap 'errorTrap ${LINENO}' ERR
 # Defaults
 #-------------------------------------------------------------------------------
 : ${AWS_REGION:="ap-southeast-2"}
-: ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"}
+: ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../" && pwd )"}
 : ${CURRENT_AWS_ACCOUNT:="$(aws sts get-caller-identity --output text --query 'Account' 2>/dev/null)"}
 
 #-------------------------------------------------------------------------------
@@ -115,6 +115,8 @@ fi
 #-------------------------------------------------------------------------------
 # Prompt for any missing options
 #-------------------------------------------------------------------------------
+
+# Environment
 if [ -z "$OPT_ENVIRONMENT" ]; then
     prompt "Enter a name for the environment (dev)"
     read OPT_ENVIRONMENT
@@ -130,6 +132,7 @@ if [ -f "${ENV_CONFIG}" ]; then
     error "This project already contains and environment named ${OPT_ENVIRONMENT}"
 fi
 
+# AWS Account ID
 if [ -z "$OPT_AWS_ACCOUNT_ID" ]; then
     if [ -z "$CURRENT_AWS_ACCOUNT" ]; then
         prompt "Enter the ID of the AWS account to create the environment in"
@@ -142,12 +145,15 @@ if [ -z "$OPT_AWS_ACCOUNT_ID" ]; then
     : ${OPT_AWS_ACCOUNT_ID:=$CURRENT_AWS_ACCOUNT}
 fi
 
+# AWS Region
 if [ -z "$OPT_AWS_REGION" ]; then
     prompt "Enter the AWS region to create the environment in (ap-southeast-2)"
     read OPT_AWS_REGION
     : ${OPT_AWS_REGION:="ap-southeast-2"}
 fi
 
+# If we have default settings for the selected AWS account ID, offer to use
+# them, rather than prompting for everything
 if [ -f "${ECSO_DIR}/accounts/${OPT_AWS_ACCOUNT_ID}.env" ]; then
     printf "${_bold}Would you like to use the default VPC and subnets for AWS account ${OPT_AWS_ACCOUNT_ID}?${_nc}\n"
 
@@ -166,16 +172,19 @@ if [ -f "${ECSO_DIR}/accounts/${OPT_AWS_ACCOUNT_ID}.env" ]; then
 
 fi
 
+# VPC ID
 if [ -z "$OPT_VPC_ID" ]; then
     prompt "Enter the ID of the VPC to create the environment in"
     read OPT_VPC_ID
 fi
 
+# Cluster ec2 instance subnets
 if [ -z "$OPT_INSTANCE_SUBNETS" ]; then
     prompt "Enter the subnets to add your ecs container instances to (subnet-abc,subnet-def)"
     read OPT_INSTANCE_SUBNETS
 fi
 
+# Load balancer subnets
 if [ -z "$OPT_ALB_SUBNETS" ]; then
     prompt "Enter the subnets to add your cluster loadbalancer to (subnet-abc,subnet-def)"
     read OPT_ALB_SUBNETS
@@ -232,6 +241,12 @@ else
         --cluster $CLUSTER_NAME
 
     printf "\33[0;32mCurrent ecso environment set to \33[1;32m${OPT_ENVIRONMENT}\33[0m\n\n"
+
+    if [ -z "\$ECSO_OLD_PS1" ]; then
+        export ECSO_OLD_PS1="\$PS1"
+    fi
+
+    export PS1="\${PS1}[ecso:\$ENVIRONMENT]"
 fi
 EOF
 
