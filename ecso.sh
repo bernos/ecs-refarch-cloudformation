@@ -14,6 +14,7 @@ SYNOPSIS:
 
 COMMANDS:
     - init
+    - add-environment
     - environment-up
     - environment-down
     - service-up
@@ -32,7 +33,7 @@ shift
 if [ "$CMD" = "help" ]; then
     usage
 elif [ -f "${ECSO_DIR}/commands/${CMD}.sh" ]; then
-    . "${ECSO_DIR}/${CMD}.sh"
+    . "${ECSO_DIR}/commands/${CMD}.sh"
 else
     echo "Unknown command ${CMD}"
 fi
