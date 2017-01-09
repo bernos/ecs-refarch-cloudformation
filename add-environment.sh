@@ -2,7 +2,7 @@
 usage() {
     cat <<EOF
 NAME:
-    add-environment 
+    add-environment
 
 DESCRIPTION:
     Adds a new ecso managed environment
@@ -18,17 +18,11 @@ SYNOPSIS:
     [--region <value>]
 
 OPTIONS:
-    --project (string)
-        The name of the project. If this value is not provided the environment
-        variable PROJECT will be used.
-
     --environment (string)
-        The name of the environment to add. If this value is not provided the
-        environment variable ENVIRONMENT will be used.
+        The name of the environment to add.
 
     --account (integer)
-        The id of the AWS account to add the environment to. If this value is
-        not provided the environment variable AWS_ACCOUNT_ID will be used.
+        The id of the AWS account to add the environment to.
 
     --vpc (string)
         The id of the VPC to add the environment to. If this value is not
@@ -108,6 +102,55 @@ do
     shift # past argument or value
 done
 
+if ! [ -f "./.ecso/project.conf" ]; then
+    error "This dir does not appear to be in an ecso project. Run ecso init first."
+else
+    . "./.ecso/project.conf"
+fi
+
+#-------------------------------------------------------------------------------
+# Prompt for any missing options
+#-------------------------------------------------------------------------------
+if [ -z "$OPT_ENVIRONMENT" ]; then
+    prompt "Enter a name for the environment (dev)"
+    read OPT_ENVIRONMENT
+    : ${OPT_ENVIRONMENT:="dev"}
+fi
+
+if [ -z "$OPT_AWS_ACCOUNT_ID" ]; then
+    default_account="$(aws sts get-caller-identity --output text --query 'Account' 2>/dev/null)"
+
+    if [ -z "$default_account" ]; then
+        prompt "Enter the ID of the AWS account to create the environment in"
+    else
+        prompt "Enter the ID of the AWS account to create the environment in ($default_account)"
+    fi
+
+    read OPT_AWS_ACCOUNT_ID
+
+    : ${OPT_AWS_ACCOUNT_ID:=$default_account}
+fi
+
+if [ -z "$OPT_VPC_ID" ]; then
+    prompt "Enter the ID of the VPC to create the environment in"
+    read OPT_VPC_ID
+fi
+
+if [ -z "$OPT_INSTANCE_SUBNETS" ]; then
+    prompt "Enter the subnets to add your ecs container instances to (subnet-abc,subnet-def)"
+    read OPT_INSTANCE_SUBNETS
+fi
+
+if [ -z "$OPT_ALB_SUBNETS" ]; then
+    prompt "Enter the subnets to add your cluster loadbalancer to (subnet-abc,subnet-def)"
+    read OPT_ALB_SUBNETS
+fi
+
+if [ -z "$OPT_AWS_REGION" ]; then
+    prompt "Enter the AWS region to create the environment in"
+    read OPT_AWS_REGION
+fi
+
 #-------------------------------------------------------------------------------
 # Validate options
 #-------------------------------------------------------------------------------
@@ -119,21 +162,16 @@ done
 : ${OPT_AWS_REGION:?"ERROR: Region not provided"}
 
 #-------------------------------------------------------------------------------
-# Ensure we are in an ecso project, and that there is not already an
-# environment with the same name defined
+# Ensure that there is not already an environment with the same name defined
 #-------------------------------------------------------------------------------
-ENV_CONFIG="./.ecs/environments/${OPT_ENVIRONMENT}/config.env"
+ENV_CONFIG="./.ecso/environments/${OPT_ENVIRONMENT}/config.env"
+ENV_ACTIVATE="./.ecso/environments/${OPT_ENVIRONMENT}/activate"
 
-if ! [ -f "./.ecso/project.conf" ]; then
-    error "This dir does not appear to be in an ecso project. Run ecso init first."
-elif [ -f "${ENV_CONFIG}" ]; then
+if [ -f "${ENV_CONFIG}" ]; then
     error "This project already contains and environment named ${OPT_ENVIRONMENT}"
 fi
 
-. "./.ecso/project.conf"
-
 bannerBlue "Adding environment ${OPT_ENVIRONMENT} to ${PROJECT}"
-
 
 mkdir -p $(dirname "${ENV_CONFIG}")
 
@@ -147,4 +185,37 @@ export ALB_SUBNETS=${OPT_ALB_SUBNETS}
 export AWS_REGION=${OPT_AWS_REGION}
 EOF
 
-bannerGreen "Successfully added environment ${OPT_ENVIRONMENT}. Run 'ecso environment-up' to deploy the environment infrastructure."
+info "Creating environment activation script at ${ENV_ACTIVATE}"
+
+cat <<EOF > "${ENV_ACTIVATE}"
+if ! [ -f "${ENV_CONFIG}" ]; then
+    echo "Error: no environment configuration found at ${ENV_CONFIG}"
+else
+    export PROJECT=${PROJECT}
+    export ENVIRONMENT=${OPT_ENVIRONMENT}
+    export CLUSTER_NAME=${PROJECT}-${OPT_ENVIRONMENT}
+
+    . "${ENV_CONFIG}"
+
+    # configure so that ecs-cli commands will work
+    # against our cluster. Set all compose prefixes to empty
+    # strings to give us full control over naming of our ecs
+    # compose services
+    export COMPOSE_PROJECT_NAME=$PROJECT
+
+    rm ~/.ecs/config
+
+    ecs-cli configure \\
+        --region \$AWS_REGION \\
+        --compose-project-name-prefix "" \\
+        --compose-service-name-prefix "" \\
+        --cluster $CLUSTER_NAME
+
+    printf "\33[0;32mCurrent ecso environment set to \33[1;32m${OPT_ENVIRONMENT}\33[0m\n\n"
+fi
+EOF
+
+bannerGreen "Successfully added environment ${OPT_ENVIRONMENT}."
+
+printf "  Run ${_bold}'source ${ENV_ACTIVATE}'${_nc} to switch ecso to the new environment.\n"
+printf "  Run ${_bold}'ecso environment-up'${_nc} to deploy the environment infrastructure.\n\n"

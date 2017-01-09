@@ -13,8 +13,7 @@ SYNOPSIS:
 
 OPTIONS:
     --project (string)
-        The name of the project. If this value is not provided the environment
-        variable PROJECT will be used.
+        The name of the project. Defaults to the name of the current directory.
 
 EOF
     exit
@@ -62,14 +61,14 @@ done
 # Set options, falling back to env vars if option values are not provided on
 # the cli
 #-------------------------------------------------------------------------------
-PROJECT=${OPT_PROJECT:-$PROJECT}
+PROJECT=${OPT_PROJECT:-$(basename $PWD)}
 
 #-------------------------------------------------------------------------------
 # Validate options
 #-------------------------------------------------------------------------------
 : ${PROJECT:?"ERROR: Project name not provided"}
 
-bannerBlue "Creating a new ecso project"
+bannerBlue "Creating a new ecso project named ${PROJECT}"
 
 if [ -d .ecso ]; then
     error ".ecso dir already exists. This directory appears to already have an ecso project."

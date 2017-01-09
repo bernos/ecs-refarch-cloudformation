@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+ENV_CONFIG="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+if ! [ -f "" ]
+
 if [ -z "$1" ]; then
     echo "Error: No environment specified. Usage: use-environment.sh <environment-name>"
 else

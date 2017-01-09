@@ -150,6 +150,10 @@ dt() {
     printf "    %s\n\n" "${2}"
 }
 
+prompt() {
+   printf "${_bold}%s:${_nc}\n > " "${1}"
+}
+
 blue() {
     printc $_blue "$@"
 
