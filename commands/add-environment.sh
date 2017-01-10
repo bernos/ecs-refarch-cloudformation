@@ -226,6 +226,18 @@ else
 
     . "${ENV_CONFIG}"
 
+    function deactivate() {
+        if [ -n "\$ECSO_OLD_PS1" ]; then
+            export PS1="\$ECSO_OLD_PS1"
+        fi
+
+        unset \$AWS_ACCOUNT_ID
+        unset \$VPC_ID
+        unset \$INSTANCE_SUBNETS
+        unset \$ALB_SUBNETS
+        unset \$AWS_REGION
+    }
+
     # configure so that ecs-cli commands will work
     # against our cluster. Set all compose prefixes to empty
     # strings to give us full control over naming of our ecs
@@ -241,12 +253,13 @@ else
         --cluster $CLUSTER_NAME
 
     printf "\33[0;32mCurrent ecso environment set to \33[1;32m${OPT_ENVIRONMENT}\33[0m\n\n"
+    printf "\33[0;32mRun \33[1;32mdeactivate\33[0;32m to leave this ecso environment\33[0m\n\n"
 
     if [ -z "\$ECSO_OLD_PS1" ]; then
         export ECSO_OLD_PS1="\$PS1"
     fi
 
-    export PS1="\${PS1}[ecso:\$ENVIRONMENT]"
+    export PS1="\${PS1}\\[\$(tput setaf 2)\\][ecso:\$ENVIRONMENT]\\[\$(tput sgr0)\\]: "
 fi
 EOF
 
