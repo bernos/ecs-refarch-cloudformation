@@ -58,20 +58,19 @@ do
 done
 
 #-------------------------------------------------------------------------------
-# Set options, falling back to env vars if option values are not provided on
-# the cli
-#-------------------------------------------------------------------------------
-PROJECT=${OPT_PROJECT:-$(basename $PWD)}
-
-#-------------------------------------------------------------------------------
-# Validate options
-#-------------------------------------------------------------------------------
-: ${PROJECT:?"ERROR: Project name not provided"}
-
-bannerBlue "Creating a new ecso project named ${PROJECT}"
 
 if [ -d .ecso ]; then
     error ".ecso dir already exists. This directory appears to already have an ecso project."
+fi
+
+bannerBlue "Creating a new ecso project"
+
+if [ -z "$OPT_PROJECT" ]; then
+    default_project_name=$(basename $PWD)
+    prompt "What is the name of the project? (${default_project_name})"
+    read PROJECT
+    echo ""
+    : ${PROJECT:=$default_project_name}
 fi
 
 info "Creating infrastructure templates"
