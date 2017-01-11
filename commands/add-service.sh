@@ -9,16 +9,13 @@ DESCRIPTION:
 
 SYNOPSIS:
     ecso.sh add-service
-    --name <value>
     [--route <value>]
     [--route-to-container <value>]
     [--route-to-container-port <value>]
     [--desired-count <value>]
+    <name>
 
 OPTIONS:
-    --name (string)
-        The name of the service to add
-
     --route (string)
         The url path to expose the service at.
 
@@ -35,8 +32,12 @@ EOF
     exit
 }
 
+#-------------------------------------------------------------------------------
+# Options
+#-------------------------------------------------------------------------------
 set -e -o pipefail
 trap 'errorTrap ${LINENO}' ERR
+export PS3=" > "
 
 #-------------------------------------------------------------------------------
 # Defaults
@@ -50,44 +51,6 @@ trap 'errorTrap ${LINENO}' ERR
 . "${ECSO_DIR}/lib/common.sh"
 
 #-------------------------------------------------------------------------------
-# Parse cli options
-#-------------------------------------------------------------------------------
-while [[ $# > 0 ]]
-do
-    key="$1"
-
-    case $key in
-        help)
-            usage
-            ;;
-        --name)
-            OPT_NAME="$2"
-            shift
-            ;;
-        --route)
-            OPT_ROUTE="$2"
-            shift
-            ;;
-        --route-to-container)
-            OPT_ROUTE_TO_CONTAINER="$2"
-            shift
-            ;;
-        --route-to-container-port)
-            OPT_ROUTE_TO_CONTAINER_PORT="$2"
-            shift
-            ;;
-        --desired-count)
-            OPT_DESIRED_COUNT="$2"
-            shift
-            ;;
-        *)
-            # unknown option
-            ;;
-    esac
-    shift # past argument or value
-done
-
-#-------------------------------------------------------------------------------
 # Source the ecso project configuration
 #-------------------------------------------------------------------------------
 if ! [ -f "./.ecso/project.conf" ]; then
@@ -96,42 +59,36 @@ else
     . "./.ecso/project.conf"
 fi
 
-# TODO: Ensure that there is at least one environment defined for the project
+#-------------------------------------------------------------------------------
+# Parse cli options
+#-------------------------------------------------------------------------------
+while [[ $# > 1 ]]
+do
+    key="$1"
+
+    case $key in
+        --route)                   OPT_ROUTE="$2";                   shift;;
+        --route-to-container)      OPT_ROUTE_TO_CONTAINER="$2";      shift;;
+        --route-to-container-port) OPT_ROUTE_TO_CONTAINER_PORT="$2"; shift;;
+        --desired-count)           OPT_DESIRED_COUNT="$2";           shift;;
+        *);; # unknown option
+    esac
+    shift # past argument or value
+done
+
+[ "$1" == "help" ] && usage
+
+OPT_NAME=$1
+
+: ${OPT_NAME:?"ERROR: Name is required"}
+
+bannerBlue "Adding ${OPT_NAME} service"
 
 #-------------------------------------------------------------------------------
 # Prompt for any missing options
 #-------------------------------------------------------------------------------
-if [ -z "$OPT_NAME" ]; then
-    prompt "Enter a name for the service"
-    read OPT_NAME
-fi
-
 if [ -d "./ecso/services/${OPT_NAME}" ]; then
     error "This project already contains a service named ${OPT_NAME}"
-fi
-
-if [ -z "$OPT_ROUTE" ]; then
-    printf "Is this a web service?\n"
-
-    select is_web_service in "Yes" "No"; do
-        if [ "$is_web_service" = "Yes" ]; then
-            prompt "Enter the route to this service"
-            read OPT_ROUTE
-
-            prompt "Enter the name of the container to route to (${OPT_NAME})"
-            read OPT_ROUTE_TO_CONTAINER
-
-            : ${OPT_ROUTE_TO_CONTAINER:=$OPT_NAME}
-
-            default_port=80
-
-            prompt "Enter the container port to route to (${default_port})"
-            read OPT_ROUTE_TO_CONTAINER_PORT
-
-            : ${OPT_ROUTE_TO_CONTAINER_PORT:=$default_port}
-        fi
-        break
-    done
 fi
 
 if [ -z "$OPT_DESIRED_COUNT" ]; then
@@ -140,10 +97,42 @@ if [ -z "$OPT_DESIRED_COUNT" ]; then
     : ${OPT_DESIRED_COUNT:=2}
 fi
 
+# If this is a web service, then we need to request a path, container and port
+# to register with the loadbalancer
+if [ -z "$OPT_ROUTE" ]; then
+    printf "${_bold}Is this a web service?${_nc}\n"
+
+    select is_web_service in "Yes" "No"; do
+        if [ "$is_web_service" = "Yes" ]; then
+            prompt "Enter the route to this service (/${OPT_NAME})"
+            read OPT_ROUTE
+            : ${OPT_ROUTE:="/${OPT_NAME}"}
+        fi
+        break
+    done
+fi
+
+if [ -n "$OPT_ROUTE" ]; then
+
+    if [ -z "$OPT_ROUTE_TO_CONTAINER" ]; then
+        prompt "Enter the name of the container to route to (${OPT_NAME})"
+        read OPT_ROUTE_TO_CONTAINER
+        : ${OPT_ROUTE_TO_CONTAINER:=$OPT_NAME}
+    fi
+
+    if [ -z "$OPT_ROUTE_TO_CONTAINER_PORT" ]; then
+        default_port=80
+        prompt "Enter the container port to route to (${default_port})"
+        read OPT_ROUTE_TO_CONTAINER_PORT
+        : ${OPT_ROUTE_TO_CONTAINER_PORT:=$default_port}
+    fi
+
+fi
+
+
 #-------------------------------------------------------------------------------
 # Validate options
 #-------------------------------------------------------------------------------
-: ${OPT_NAME:?"ERROR: Name is required"}
 : ${OPT_DESIRED_COUNT:?"ERROR: Desired count is required"}
 
 if [ -n "$OPT_ROUTE" ]; then
@@ -152,17 +141,16 @@ if [ -n "$OPT_ROUTE" ]; then
 fi
 
 #-------------------------------------------------------------------------------
+
 TEMPLATE_FILE="./.ecso/services/${OPT_NAME}/resources.yaml"
-CONFIG_FILE="./.ecso/services/${OPT_NAME}/config.env"
+CONFIG_FILE="./services/${OPT_NAME}/config.env"
 COMPOSE_FILE="./services/${OPT_NAME}/docker-compose.yaml"
 
-bannerBlue "Adding ${OPT_NAME} service"
 
 mkdir -p \
     "$(dirname $TEMPLATE_FILE)" \
     "$(dirname $CONFIG_FILE)" \
     "$(dirname $COMPOSE_FILE)"
-
 
 #-------------------------------------------------------------------------------
 # Generate cloudformation template
@@ -289,7 +277,7 @@ export DESIRED_COUNT=$OPT_DESIRED_COUNT
 EOF
 
 if [ -n "$OPT_ROUTE" ]; then
-    cat << EOF >> "${CONFIG_FILE}"
+cat << EOF >> "${CONFIG_FILE}"
 export ROUTE_PATH=$OPT_ROUTE
 export ROUTE_TO_CONTAINER=$OPT_ROUTE_TO_CONTAINER
 export ROUTE_TO_CONTAINER_PORT=$OPT_ROUTE_TO_CONTAINER_PORT
@@ -340,4 +328,10 @@ services:
 EOF
 fi
 
-bannerGreen "Successfully created ${OPT_NAME} service"
+bannerGreen "Successfully created ${OPT_NAME} service. The following resources have been added to the project:"
+
+dt "Cloudformation template" "$TEMPLATE_FILE"
+dt "Configuration file" "$CONFIG_FILE"
+dt "Docker compose file" "$COMPOSE_FILE"
+
+printf "You can add environment specific settings by creating configuration files at ./services/${OPT_NAME}/config.<environment>.env\n\n"
