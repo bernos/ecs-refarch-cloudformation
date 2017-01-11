@@ -41,9 +41,7 @@ trap 'errorTrap ${LINENO}' ERR
 #-------------------------------------------------------------------------------
 # Defaults
 #-------------------------------------------------------------------------------
-: ${AWS_REGION:="ap-southeast-2"}
 : ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../" && pwd )"}
-: ${CURRENT_AWS_ACCOUNT:="$(aws sts get-caller-identity --output text --query 'Account' 2>/dev/null)"}
 : ${DESIRED_COUNT:=2}
 
 #-------------------------------------------------------------------------------
@@ -108,6 +106,10 @@ if [ -z "$OPT_NAME" ]; then
     read OPT_NAME
 fi
 
+if [ -d "./ecso/services/${OPT_NAME}" ]; then
+    error "This project already contains a service named ${OPT_NAME}"
+fi
+
 if [ -z "$OPT_ROUTE" ]; then
     printf "Is this a web service?\n"
 
@@ -150,19 +152,192 @@ if [ -n "$OPT_ROUTE" ]; then
 fi
 
 #-------------------------------------------------------------------------------
+TEMPLATE_FILE="./.ecso/services/${OPT_NAME}/resources.yaml"
+CONFIG_FILE="./.ecso/services/${OPT_NAME}/config.env"
+COMPOSE_FILE="./services/${OPT_NAME}/docker-compose.yaml"
+
+bannerBlue "Adding ${OPT_NAME} service"
+
+mkdir -p \
+    "$(dirname $TEMPLATE_FILE)" \
+    "$(dirname $CONFIG_FILE)" \
+    "$(dirname $COMPOSE_FILE)"
+
+
+#-------------------------------------------------------------------------------
 # Generate cloudformation template
 #-------------------------------------------------------------------------------
+info "Generating cloud formation template at ${TEMPLATE_FILE}"
+
+cat << EOF > "${TEMPLATE_FILE}"
+Parameters:
+
+    VPC:
+        Description: The VPC that the ECS cluster is deployed to
+        Type: AWS::EC2::VPC::Id
+
+    Listener:
+        Description: The Application Load Balancer listener to register with
+        Type: String
+
+    Path:
+        Description: The path to register with the Application Load Balancer
+        Type: String
+        Default: /products
+
+Resources:
+
+    CloudWatchLogsGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: !Ref AWS::StackName
+            RetentionInDays: 365
+
+    TargetGroup:
+        Type: AWS::ElasticLoadBalancingV2::TargetGroup
+        Properties:
+            VpcId: !Ref VPC
+            Port: 80
+            Protocol: HTTP
+            Matcher:
+                HttpCode: 200-299
+            HealthCheckIntervalSeconds: 10
+            HealthCheckPath: !Ref Path
+            HealthCheckProtocol: HTTP
+            HealthCheckTimeoutSeconds: 5
+            HealthyThresholdCount: 2
+
+    ListenerRule:
+        Type: AWS::ElasticLoadBalancingV2::ListenerRule
+        Properties:
+            ListenerArn: !Ref Listener
+            Priority: 2
+            Conditions:
+                - Field: path-pattern
+                  Values:
+                    - !Ref Path
+            Actions:
+                - TargetGroupArn: !Ref TargetGroup
+                  Type: forward
+
+    CloudWatchLogsGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: !Ref AWS::StackName
+            RetentionInDays: 365
+
+    # This IAM Role grants the service access to register/unregister with the
+    # Application Load Balancer (ALB). It is based on the default documented here:
+    # http://docs.aws.amazon.com/AmazonECS/latest/developerguide/service_IAM_role.html
+    ServiceRole:
+        Type: AWS::IAM::Role
+        Properties:
+            RoleName: !Sub ecs-service-${AWS::StackName}
+            Path: /
+            AssumeRolePolicyDocument: |
+                {
+                    "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": { "Service": [ "ecs.amazonaws.com" ]},
+                        "Action": [ "sts:AssumeRole" ]
+                    }]
+                }
+            Policies:
+                - PolicyName: !Sub ecs-service-${AWS::StackName}
+                  PolicyDocument:
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [{
+                                "Effect": "Allow",
+                                "Action": [
+                                    "ec2:AuthorizeSecurityGroupIngress",
+                                    "ec2:Describe*",
+                                    "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                                    "elasticloadbalancing:Describe*",
+                                    "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                                    "elasticloadbalancing:DeregisterTargets",
+                                    "elasticloadbalancing:DescribeTargetGroups",
+                                    "elasticloadbalancing:DescribeTargetHealth",
+                                    "elasticloadbalancing:RegisterTargets"
+                                ],
+                                "Resource": "*"
+                        }]
+                    }
+
+Outputs:
+
+    TargetGroup:
+        Description: Reference to the load balancer target group
+        Value: !Ref TargetGroup
+
+    ServiceRole:
+        Description: The IAM role for the service
+        Value: !Ref ServiceRole
+
+    CloudWatchLogsGroup:
+        Description: Reference to the cloudwatch logs group
+        Value: !Ref CloudWatchLogsGroup
+EOF
 
 #-------------------------------------------------------------------------------
 # Generate env config files
 #-------------------------------------------------------------------------------
-# export ROUTE_PATH=/
-# export ROUTE_TO_CONTAINER=nginx
-# export ROUTE_TO_CONTAINER_PORT=80
-# export DESIRED_COUNT=2
-# export CLUSTER_NAME=ecs-refarch-sandbox
+info "Generating config file at ${CONFIG_FILE}"
+
+cat << EOF > "${CONFIG_FILE}"
+export DESIRED_COUNT=$OPT_DESIRED_COUNT
+EOF
+
+if [ -n "$OPT_ROUTE" ]; then
+    cat << EOF >> "${CONFIG_FILE}"
+export ROUTE_PATH=$OPT_ROUTE
+export ROUTE_TO_CONTAINER=$OPT_ROUTE_TO_CONTAINER
+export ROUTE_TO_CONTAINER_PORT=$OPT_ROUTE_TO_CONTAINER_PORT
+EOF
+fi
 
 #-------------------------------------------------------------------------------
 # Generate docker-compose file
 #-------------------------------------------------------------------------------
+info "Generating docker compose file at ${COMPOSE_FILE}"
 
+if [ -n "$OPT_ROUTE" ]; then
+cat << EOF > "${COMPOSE_FILE}"
+version: '2'
+
+volumes:
+  nginxdata: {}
+
+services:
+  nginx:
+    image: nginx:latest
+    mem_limit: 20000000
+    ports:
+      - "0:$OPT_ROUTE_TO_CONTAINER_PORT"
+    volumes:
+      - nginxdata:/usr/share/nginx/html/:ro
+  instance-id-getter:
+    image: busybox:latest
+    mem_limit: 10000000
+    volumes:
+      - nginxdata:/nginx
+    command: sh -c "while true; do echo \"Hello world <p><pre> \`env\` </pre></p> \" > /nginx/index.html; sleep 3; done"
+EOF
+else
+cat << EOF > "${COMPOSE_FILE}"
+version: '2'
+
+volumes:
+  nginxdata: {}
+
+services:
+  instance-id-getter:
+    image: busybox:latest
+    mem_limit: 10000000
+    volumes:
+      - nginxdata:/nginx
+    command: sh -c "while true; do echo \"Hello world <p><pre> \`env\` </pre></p> \" > /nginx/index.html; sleep 3; done"
+EOF
+fi
+
+bannerGreen "Successfully created ${OPT_NAME} service"
