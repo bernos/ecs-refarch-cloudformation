@@ -10,7 +10,6 @@ DESCRIPTION:
 
 SYNOPSIS:
     $(basename $0)
-    --project <value>
     --environment <value>
     --account <value>
     --vpc <value>
@@ -20,16 +19,6 @@ SYNOPSIS:
     [--region <value>]
 
 OPTIONS:
-    --project (string)
-        The name of the project. The cloudformation stack that is created by
-        $(basename $0) will be <project>-<environment>. If this value is not
-        provided the environment variable PROJECT will be used.
-
-    --environment (string)
-        The name of the environment. The cloudformation stack that is created by
-        $(basename $0) will be <project>-<environment>. If this value is not
-        provided the environment variable ENVIRONMENT will be used.
-
     --account (integer)
         The id of the AWS account to deploy to. If this value is not provided
         the environment variable AWS_ACCOUNT_ID will be used.
@@ -61,86 +50,46 @@ EOF
     exit
 }
 
-set -e -o pipefail
-trap 'errorTrap ${LINENO}' ERR
-
-#-------------------------------------------------------------------------------
-# Defaults
-#
-# These defaults can be overriden for each environment in
-# ./<environment>.env
-#-------------------------------------------------------------------------------
-: ${AWS_REGION:="ap-southeast-2"}
-: ${TEMPLATE_FILE:=".ecso/infrastructure/templates/stack.yaml"}
-: ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../" && pwd )"}
-
 #-------------------------------------------------------------------------------
 # Includes
 #-------------------------------------------------------------------------------
-. "${ECSO_DIR}/lib/common.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)/lib/common.sh" && assertProject
+
+#-------------------------------------------------------------------------------
+# Defaults
+#-------------------------------------------------------------------------------
+: ${TEMPLATE_FILE:=".ecso/infrastructure/templates/stack.yaml"}
 
 #-------------------------------------------------------------------------------
 # Parse cli options
 #-------------------------------------------------------------------------------
-while [[ $# > 0 ]]
+while [[ $# > 1 ]]
 do
     key="$1"
 
     case $key in
-        help)
-            usage
-            ;;
-        --project)
-            OPT_PROJECT="$2"
-            shift
-            ;;
-        --environment)
-            ENVIRONMENT="$2"
-            shift
-            ;;
-        --account)
-            OPT_AWS_ACCOUNT_ID="$2"
-            shift
-            ;;
-        --vpc)
-            OPT_VPC_ID="$2"
-            shift
-            ;;
-        --instance-subnets)
-            OPT_INSTANCE_SUBNETS="$2"
-            shift
-            ;;
-        --alb-subnets)
-            OPT_ALB_SUBNETS="$2"
-            shift
-            ;;
-        --region)
-            OPT_AWS_REGION="$2"
-            shift
-            ;;
-        *)
-            # unknown option
-            ;;
+        --account)          OPT_AWS_ACCOUNT_ID="$2";   shift;;
+        --vpc)              OPT_VPC_ID="$2";           shift;;
+        --instance-subnets) OPT_INSTANCE_SUBNETS="$2"; shift;;
+        --alb-subnets)      OPT_ALB_SUBNETS="$2";      shift;;
+        --region)           OPT_AWS_REGION="$2";       shift;;
+        *)                  PARAM="$1";;
     esac
-    shift # past argument or value
+    shift
 done
 
-: ${ENVIRONMENT:?"ERROR: Environment name not provided"}
+[ "$PARAM" == "help" ] && usage
 
-. "./.ecso/project.conf"
+ENVIRONMENT=${PARAM:-${ENVIRONMENT:?"ERROR: Environment name not provided"}}
 
-conf="./.ecso/infrastructure/${ENVIRONMENT}.env"
+bannerBlue "Bringing up ${ENVIRONMENT} environment."
 
-if [ -f "$conf" ]; then
-    ENV_CONFIG_FOUND=1
-    . "$conf"
-fi
+loadEnvironmentConfiguration ${ENVIRONMENT}
 
 #-------------------------------------------------------------------------------
 # Set options, falling back to env vars if option values are not provided on
 # the cli
 #-------------------------------------------------------------------------------
-PROJECT=${OPT_PROJECT:-$PROJECT}
 AWS_ACCOUNT_ID=${OPT_AWS_ACCOUNT_ID:-$AWS_ACCOUNT_ID}
 VPC_ID=${OPT_VPC_ID:-$VPC_ID}
 ALB_SUBNETS=${OPT_ALB_SUBNETS:-$ALB_SUBNETS}
@@ -163,18 +112,6 @@ BUCKET_PREFIX=$CLUSTER_NAME/infrastructure
 PACKAGED_TEMPLATE=/tmp/$CLUSTER_NAME-infrastructure.yaml
 
 #-------------------------------------------------------------------------------
-
-if [ "$(getStackCount $CLUSTER_NAME $AWS_REGION)" = "0" ]; then
-    bannerBlue "Creating ${ENVIRONMENT} environment."
-else
-    bannerBlue "Updating ${ENVIRONMENT} environment."
-fi
-
-if [ "$ENV_CONFIG_FOUND" = "1" ]; then
-    info "Using environment configuration from ${conf}"
-else
-    warn "No environment configuration found at ${conf}"
-fi
 
 info "Environment will be deployed to VPC ${VPC_ID} in AWS account ${AWS_ACCOUNT_ID}"
 info "Packaging cloudformation template ${TEMPLATE_FILE}"
@@ -203,8 +140,9 @@ echo ""
 
 exportStackOutputs $CLUSTER_NAME
 
-stackId=$(getStackId $CLUSTER_NAME $AWS_REGION)
-
+#-------------------------------------------------------------------------------
+# Great success!
+#-------------------------------------------------------------------------------
 bannerGreen "Successfully deployed stack for $ENVIRONMENT environment to cloudformation stack $CLUSTER_NAME"
 
 dt "Load balancer" "http://${LoadBalancerUrl}"

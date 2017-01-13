@@ -60,13 +60,13 @@ OPTIONS:
     --container (string)
         The name of the container in the docker-compose.yaml file to register
         with the load balancer. If this option is set, --route and --port must
-        also be set. If no value is provided, the CONTAINER_NAME environment
+        also be set. If no value is provided, the ROUTE_TO_CONTAINER environment
         variable will be used.
 
     --port (integer)
         The container port to register with the load balancer. If this option is
         set, --route and --container must also be set. If no value is provided
-        the CONTAINER_PORT environment variable will be used.
+        the ROUTE_TO_CONTAINER_PORT environment variable will be used.
 
     --region (string)
         The AWS region to deploy to. Defaults to ap-southeast-2. If no value is
@@ -81,9 +81,6 @@ trap 'errorTrap ${LINENO}' ERR
 
 #-------------------------------------------------------------------------------
 # Defaults
-#
-# These defaults can be overriden for each environment in
-# ./services/<service>/<environment>.env
 #-------------------------------------------------------------------------------
 : ${DESIRED_COUNT:=1}
 : ${AWS_REGION:="ap-southeast-2"}
@@ -95,59 +92,51 @@ trap 'errorTrap ${LINENO}' ERR
 . "${ECSO_DIR}/lib/common.sh"
 
 #-------------------------------------------------------------------------------
+# Source the ecso project configuration
+#-------------------------------------------------------------------------------
+if ! [ -f "./.ecso/project.conf" ]; then
+    error "The current directory does not appear to contain an ecso project. Run ecso init first."
+else
+    . "./.ecso/project.conf"
+fi
+
+#-------------------------------------------------------------------------------
 # Parse cli options
 #-------------------------------------------------------------------------------
-while [[ $# > 0 ]]
+while [[ $# > 1 ]]
 do
     key="$1"
 
     case $key in
-        help)
-            usage
-            ;;
-        --service)
-            SERVICE_NAME="$2"
-            shift
-            ;;
-        --environment)
-            ENVIRONMENT="$2"
-            shift
-            ;;
-        --cluster)
-            OPT_CLUSTER_NAME="$2"
-            shift
-            ;;
-        --count)
-            OPT_DESIRED_COUNT="$2"
-            shift
-            ;;
-        --route)
-            OPT_ROUTE_PATH="$2"
-            shift
-            ;;
-        --container)
-            OPT_CONTAINER_NAME="$2"
-            shift
-            ;;
-        --port)
-            OPT_CONTAINER_PORT="$2"
-            shift
-            ;;
-        --region)
-            OPT_AWS_REGION="$2"
-            shift
-            ;;
-        *)
-            # unknown option
-            ;;
+        --environment) ENVIRONMENT="$2"; shift;;
+        --cluster) OPT_CLUSTER_NAME="$2"; shift;;
+        --count) OPT_DESIRED_COUNT="$2"; shift;;
+        --route) OPT_ROUTE_PATH="$2"; shift;;
+        --container) OPT_ROUTE_TO_CONTAINER="$2"; shift;;
+        --port) OPT_ROUTE_TO_CONTAINER_PORT="$2"; shift;;
+        --region) OPT_AWS_REGION="$2"; shift;;
+        *);;
     esac
-    shift # past argument or value
+    shift
 done
+
+[ "$1" == "help" ] && usage
+
+SERVICE_NAME=$1
 
 : ${ENVIRONMENT:?"ERROR: Environment name not provided."}
 : ${SERVICE_NAME:?"ERROR: Service name not provided."}
 
-conf="./services/$SERVICE_NAME/$ENVIRONMENT.env"
+#-------------------------------------------------------------------------------
+# Load service config
+#-------------------------------------------------------------------------------
+if ! [ -f "./services/${SERVICE_NAME}/config.env" ]; then
+    error "No service configuration found at ./services/${SERVICE_NAME}/config.env"
+fi
+
+. "./services/${SERVICE_NAME}/config.env"
+
+conf="./services/$SERVICE_NAME/config.${ENVIRONMENT}.env"
 
 if [ -f "$conf" ]; then
     SERVICE_CONFIG_FOUND=1
@@ -161,9 +150,13 @@ fi
 CLUSTER_NAME=${OPT_CLUSTER_NAME:-$CLUSTER_NAME}
 DESIRED_COUNT=${OPT_DESIRED_COUNT:-$DESIRED_COUNT}
 ROUTE_PATH=${OPT_ROUTE_PATH:-$ROUTE_PATH}
-CONTAINER_NAME=${OPT_CONTAINER_NAME:-$CONTAINER_NAME}
-CONTAINER_PORT=${OPT_CONTAINER_PORT:-$CONTAINER_PORT}
+ROUTE_TO_CONTAINER=${OPT_ROUTE_TO_CONTAINER:-$ROUTE_TO_CONTAINER}
+ROUTE_TO_CONTAINER_PORT=${OPT_ROUTE_TO_CONTAINER_PORT:-$ROUTE_TO_CONTAINER_PORT}
 AWS_REGION=${OPT_AWS_REGION:-$AWS_REGION}
+TASK_NAME="$CLUSTER_NAME-$SERVICE_NAME"
+SERVICE_STACK_NAME=$CLUSTER_NAME-$SERVICE_NAME
+SERVICE_TEMPLATE=./.ecso/services/$SERVICE_NAME/resources.yaml
+COMPOSE_FILE=${COMPOSE_FILE:-./services/$SERVICE_NAME/docker-compose.yaml}
 
 #-------------------------------------------------------------------------------
 # Validate options
@@ -175,14 +168,9 @@ AWS_REGION=${OPT_AWS_REGION:-$AWS_REGION}
 # Validate options that are only required if we are registering the service
 # with a load balancer
 if [ -n "$ROUTE_PATH" ]; then
-    : ${CONTAINER_NAME:?"ERROR: No container name provided."}
-    : ${CONTAINER_PORT:?"ERROR: No container port provided."}
+    : ${ROUTE_TO_CONTAINER:?"ERROR: No container name provided."}
+    : ${ROUTE_TO_CONTAINER_PORT:?"ERROR: No container port provided."}
 fi
-
-TASK_NAME="$CLUSTER_NAME-$SERVICE_NAME"
-SERVICE_STACK_NAME=$CLUSTER_NAME-$SERVICE_NAME
-SERVICE_TEMPLATE=./.ecso/services/$SERVICE_NAME/resources.yaml
-COMPOSE_FILE=${COMPOSE_FILE:-./services/$SERVICE_NAME/docker-compose.yaml}
 
 #-------------------------------------------------------------------------------
 
@@ -195,7 +183,7 @@ fi
 if [ "$SERVICE_CONFIG_FOUND" = "1" ]; then
     info "Using service configuration from ${conf}"
 else
-    warn "No service configuration found at ${conf}"
+    warn "No service configuration for ${ENVIRONMENT} environment found at ${conf}"
 fi
 
 #-------------------------------------------------------------------------------
@@ -242,6 +230,12 @@ exportStackOutputs $SERVICE_STACK_NAME
 info "Registering ${TASK_NAME} ecs task."
 info "Using ${COMPOSE_FILE}" && echo ""
 
+ecs-cli configure \
+    --region $AWS_REGION \
+    --compose-project-name-prefix "" \
+    --compose-service-name-prefix "" \
+    --cluster $CLUSTER_NAME
+
 ecs-cli compose \
     --file $COMPOSE_FILE \
     --project-name $TASK_NAME \
@@ -260,7 +254,7 @@ if [ "$(getServiceCount $SERVICE_NAME $CLUSTER_NAME $AWS_REGION)" = "0" ]; then
             --role $ServiceRole \
             --task-definition $TASK_NAME \
             --desired-count $DESIRED_COUNT \
-            --load-balancers targetGroupArn=$TargetGroup,containerName=$CONTAINER_NAME,containerPort=$CONTAINER_PORT \
+            --load-balancers targetGroupArn=$TargetGroup,containerName=$ROUTE_TO_CONTAINER,containerPort=$ROUTE_TO_CONTAINER_PORT \
             --region $AWS_REGION
     else
         aws ecs create-service \

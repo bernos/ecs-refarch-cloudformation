@@ -9,18 +9,14 @@ DESCRIPTION:
 
 SYNOPSIS:
     ecso.sh add-environment
-    --project <value>
-    --environment <value>
     --account <value>
     --vpc <value>
     --instance-subnets <value>
     --alb-subnets <value>
     [--region <value>]
+    <name>
 
 OPTIONS:
-    --environment (string)
-        The name of the environment to add.
-
     --account (integer)
         The id of the AWS account to add the environment to.
 
@@ -46,82 +42,40 @@ EOF
     exit
 }
 
-set -e -o pipefail
-trap 'errorTrap ${LINENO}' ERR
+#-------------------------------------------------------------------------------
+# Includes
+#-------------------------------------------------------------------------------
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)/lib/common.sh" && assertProject
 
 #-------------------------------------------------------------------------------
 # Defaults
 #-------------------------------------------------------------------------------
-: ${AWS_REGION:="ap-southeast-2"}
-: ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../" && pwd )"}
 : ${CURRENT_AWS_ACCOUNT:="$(aws sts get-caller-identity --output text --query 'Account' 2>/dev/null)"}
-
-#-------------------------------------------------------------------------------
-# Includes
-#-------------------------------------------------------------------------------
-. "${ECSO_DIR}/lib/common.sh"
 
 #-------------------------------------------------------------------------------
 # Parse cli options
 #-------------------------------------------------------------------------------
-while [[ $# > 0 ]]
+while [[ $# > 1 ]]
 do
     key="$1"
 
     case $key in
-        help)
-            usage
-            ;;
-        --environment)
-            OPT_ENVIRONMENT="$2"
-            shift
-            ;;
-        --account)
-            OPT_AWS_ACCOUNT_ID="$2"
-            shift
-            ;;
-        --vpc)
-            OPT_VPC_ID="$2"
-            shift
-            ;;
-        --instance-subnets)
-            OPT_INSTANCE_SUBNETS="$2"
-            shift
-            ;;
-        --alb-subnets)
-            OPT_ALB_SUBNETS="$2"
-            shift
-            ;;
-        --region)
-            OPT_AWS_REGION="$2"
-            shift
-            ;;
-        *)
-            # unknown option
-            ;;
+        --environment)      OPT_ENVIRONMENT="$2";      shift;;
+        --account)          OPT_AWS_ACCOUNT_ID="$2";   shift;;
+        --vpc)              OPT_VPC_ID="$2";           shift;;
+        --instance-subnets) OPT_INSTANCE_SUBNETS="$2"; shift;;
+        --alb-subnets)      OPT_ALB_SUBNETS="$2";      shift;;
+        --region)           OPT_AWS_REGION="$2";       shift;;
+        *);;
     esac
-    shift # past argument or value
+    shift
 done
 
-#-------------------------------------------------------------------------------
-# Source the ecso project configuration
-#-------------------------------------------------------------------------------
-if ! [ -f "./.ecso/project.conf" ]; then
-    error "The current directory does not appear to contain an ecso project. Run ecso init first."
-else
-    . "./.ecso/project.conf"
-fi
+[ "$1" == "help" ] && usage
 
-#-------------------------------------------------------------------------------
-# Prompt for any missing options
-#-------------------------------------------------------------------------------
+OPT_ENVIRONMENT=$1
 
-# Environment
-if [ -z "$OPT_ENVIRONMENT" ]; then
-    prompt "Enter a name for the environment (dev)"
-    read OPT_ENVIRONMENT
-    : ${OPT_ENVIRONMENT:="dev"}
-fi
+: ${OPT_ENVIRONMENT:?"ERROR: Environment name not provided"}
 
 # Ensure that there is not already an environment with the same name defined
 # before wasting time asking for more options
@@ -132,6 +86,11 @@ if [ -f "${ENV_CONFIG}" ]; then
     error "This project already contains and environment named ${OPT_ENVIRONMENT}"
 fi
 
+bannerBlue "Adding environment ${OPT_ENVIRONMENT} to ${PROJECT}"
+
+#-------------------------------------------------------------------------------
+# Prompt for any missing options
+#-------------------------------------------------------------------------------
 # AWS Account ID
 if [ -z "$OPT_AWS_ACCOUNT_ID" ]; then
     if [ -z "$CURRENT_AWS_ACCOUNT" ]; then
@@ -193,14 +152,12 @@ fi
 #-------------------------------------------------------------------------------
 # Validate options
 #-------------------------------------------------------------------------------
-: ${OPT_ENVIRONMENT:?"ERROR: Environment name not provided"}
 : ${OPT_AWS_ACCOUNT_ID:?"ERROR: AWS Account ID not provided."}
 : ${OPT_VPC_ID:?"ERROR: VPC ID not provided."}
 : ${OPT_INSTANCE_SUBNETS:?"ERROR: Instance subnets not provided."}
 : ${OPT_ALB_SUBNETS:?"ERROR: ALB subnets not provided."}
 : ${OPT_AWS_REGION:?"ERROR: Region not provided"}
 
-bannerBlue "Adding environment ${OPT_ENVIRONMENT} to ${PROJECT}"
 
 mkdir -p $(dirname "${ENV_CONFIG}")
 
@@ -231,11 +188,11 @@ else
             export PS1="\$ECSO_OLD_PS1"
         fi
 
-        unset \$AWS_ACCOUNT_ID
-        unset \$VPC_ID
-        unset \$INSTANCE_SUBNETS
-        unset \$ALB_SUBNETS
-        unset \$AWS_REGION
+        unset AWS_ACCOUNT_ID
+        unset VPC_ID
+        unset INSTANCE_SUBNETS
+        unset ALB_SUBNETS
+        unset AWS_REGION
     }
 
     # configure so that ecs-cli commands will work
@@ -244,10 +201,12 @@ else
     # compose services
     export COMPOSE_PROJECT_NAME=$PROJECT
 
-    rm ~/.ecs/config
+    if [ -f "~/.ecs/config" ]; then
+        rm ~/.ecs/config
+    fi
 
     ecs-cli configure \\
-        --region \$AWS_REGION \\
+        --region $AWS_REGION \\
         --compose-project-name-prefix "" \\
         --compose-service-name-prefix "" \\
         --cluster $CLUSTER_NAME

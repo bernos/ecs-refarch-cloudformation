@@ -9,17 +9,11 @@ DESCRIPTION:
 
 SYNOPSIS:
     $(basename $0)
-    --service <value>
     --cluster <value>
     [--region <value>]
+    service
 
 OPTIONS:
-    --service (string)
-        The service to deploy. There must be a folder at ./services/<service>
-        which contains a docker-compose.yaml file. and optional resources.yaml
-        file. If no value is provided, the SERVICE_NAME environment variable
-        will be used.
-
     --cluster (string)
         The cluster to deploy to. There must also be a cloudformation stack
         whose name matches the cluster name. This stack must also have an output
@@ -34,11 +28,11 @@ EOF
     exit
 }
 
+set -e -o pipefail
+trap 'errorTrap ${LINENO}' ERR
+
 #-------------------------------------------------------------------------------
 # Defaults
-#
-# These defaults can be overriden for each environment in
-# ./services/<service>/<environment>.env
 #-------------------------------------------------------------------------------
 : ${AWS_REGION:="ap-southeast-2"}
 : ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../" && pwd )"}
@@ -49,58 +43,49 @@ EOF
 . "${ECSO_DIR}/lib/common.sh"
 
 #-------------------------------------------------------------------------------
+# Source the ecso project configuration
+#-------------------------------------------------------------------------------
+if ! [ -f "./.ecso/project.conf" ]; then
+    error "The current directory does not appear to contain an ecso project. Run ecso init first."
+else
+    . "./.ecso/project.conf"
+fi
+
+#-------------------------------------------------------------------------------
 # Parse cli options
 #-------------------------------------------------------------------------------
-while [[ $# > 0 ]]
+while [[ $# > 1 ]]
 do
     key="$1"
 
     case $key in
-        help)
-            usage
-            ;;
-        --service)
-            SERVICE_NAME="$2"
-            shift
-            ;;
-        --cluster)
-            OPT_CLUSTER_NAME="$2"
-            shift
-            ;;
-        --region)
-            OPT_AWS_REGION="$2"
-            shift
-            ;;
-        *)
-            # unknown option
-            ;;
+        --environment) ENVIRONMENT="$2"; shift;;
+        --cluster) OPT_CLUSTER_NAME="$2"; shift;;
+        --region) OPT_AWS_REGION="$2"; shift;;
+        *);;
     esac
-    shift # past argument or value
+    shift
 done
 
-#-------------------------------------------------------------------------------
-# Set options, falling back to env vars if option values are not provided on
-# the cli
-#-------------------------------------------------------------------------------
+[ "$1" == "help" ] && usage
+
+SERVICE_NAME=$1
 CLUSTER_NAME=${OPT_CLUSTER_NAME:-$CLUSTER_NAME}
 AWS_REGION=${OPT_AWS_REGION:-$AWS_REGION}
+SERVICE_STACK_NAME=$CLUSTER_NAME-$SERVICE_NAME
+COMPOSE_FILE=${COMPOSE_FILE:-./services/$SERVICE_NAME/docker-compose.yaml}
 
 #-------------------------------------------------------------------------------
 # Validate options
 #-------------------------------------------------------------------------------
 : ${SERVICE_NAME:?"ERROR: Service name not provided."}
+: ${ENVIRONMENT:?"ERROR: Environment name not provided."}
 : ${AWS_REGION:?"ERROR: No region provided."}
 : ${CLUSTER_NAME:?"ERROR: No cluster name provided."}
 
-SERVICE_STACK_NAME=$CLUSTER_NAME-$SERVICE_NAME
-COMPOSE_FILE=${COMPOSE_FILE:-./services/$SERVICE_NAME/docker-compose.yaml}
-
 #-------------------------------------------------------------------------------
 
-set -e -o pipefail
-trap 'errorTrap ${LINENO}' ERR
-
-info "Terminating service $SERVICE_NAME..."
+bannerBlue "Terminating service ${SERVICE_NAME} in the ${ENVIRONMENT} environment"
 
 #-------------------------------------------------------------------------------
 # Export outputs from the cluster cfn stack as env vars
@@ -116,6 +101,7 @@ servicecount=$(getServiceCount $SERVICE_NAME $CLUSTER_NAME $AWS_REGION)
 if [ "$servicecount" != "0" ]; then
     if [ -f "$COMPOSE_FILE" ]; then
         info "Removing service with ecs-cli compose..." && echo ""
+
         ecs-cli configure \
                 --region $AWS_REGION \
                 --compose-project-name-prefix "" \
@@ -136,4 +122,4 @@ fi
 #-------------------------------------------------------------------------------
 deleteStack $SERVICE_STACK_NAME $AWS_REGION
 
-info "Service $SERVICE_NAME was successfully terminated."
+bannerGreen "Service $SERVICE_NAME was successfully terminated."

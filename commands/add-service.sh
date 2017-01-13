@@ -33,31 +33,14 @@ EOF
 }
 
 #-------------------------------------------------------------------------------
-# Options
+# Includes
 #-------------------------------------------------------------------------------
-set -e -o pipefail
-trap 'errorTrap ${LINENO}' ERR
-export PS3=" > "
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)/lib/common.sh" && assertProject
 
 #-------------------------------------------------------------------------------
 # Defaults
 #-------------------------------------------------------------------------------
-: ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../" && pwd )"}
 : ${DESIRED_COUNT:=2}
-
-#-------------------------------------------------------------------------------
-# Includes
-#-------------------------------------------------------------------------------
-. "${ECSO_DIR}/lib/common.sh"
-
-#-------------------------------------------------------------------------------
-# Source the ecso project configuration
-#-------------------------------------------------------------------------------
-if ! [ -f "./.ecso/project.conf" ]; then
-    error "The current directory does not appear to contain an ecso project. Run ecso init first."
-else
-    . "./.ecso/project.conf"
-fi
 
 #-------------------------------------------------------------------------------
 # Parse cli options
@@ -171,7 +154,6 @@ Parameters:
     Path:
         Description: The path to register with the Application Load Balancer
         Type: String
-        Default: /products
 
 Resources:
 
@@ -220,7 +202,7 @@ Resources:
     ServiceRole:
         Type: AWS::IAM::Role
         Properties:
-            RoleName: !Sub ecs-service-${AWS::StackName}
+            RoleName: !Sub ecs-service-\${AWS::StackName}
             Path: /
             AssumeRolePolicyDocument: |
                 {
@@ -231,7 +213,7 @@ Resources:
                     }]
                 }
             Policies:
-                - PolicyName: !Sub ecs-service-${AWS::StackName}
+                - PolicyName: !Sub ecs-service-\${AWS::StackName}
                   PolicyDocument:
                     {
                         "Version": "2012-10-17",
@@ -297,16 +279,27 @@ volumes:
   nginxdata: {}
 
 services:
-  nginx:
+  ${OPT_ROUTE_TO_CONTAINER}:
     image: nginx:latest
     mem_limit: 20000000
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: \${AWS_REGION}
+        awslogs-group: \${CLUSTER_NAME}-$OPT_NAME
     ports:
       - "0:$OPT_ROUTE_TO_CONTAINER_PORT"
     volumes:
       - nginxdata:/usr/share/nginx/html/:ro
+    command: /bin/bash -c "echo \"server { location / { root /usr/share/nginx/html; try_files \\$\$uri /index.html =404; } }\" > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
   instance-id-getter:
     image: busybox:latest
     mem_limit: 10000000
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: \${AWS_REGION}
+        awslogs-group: \${CLUSTER_NAME}-$OPT_NAME
     volumes:
       - nginxdata:/nginx
     command: sh -c "while true; do echo \"Hello world <p><pre> \`env\` </pre></p> \" > /nginx/index.html; sleep 3; done"
@@ -322,6 +315,11 @@ services:
   instance-id-getter:
     image: busybox:latest
     mem_limit: 10000000
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: \${AWS_REGION}
+        awslogs-group: \${CLUSTER_NAME}-$OPT_NAME
     volumes:
       - nginxdata:/nginx
     command: sh -c "while true; do echo \"Hello world <p><pre> \`env\` </pre></p> \" > /nginx/index.html; sleep 3; done"

@@ -1,3 +1,26 @@
+#-------------------------------------------------------------------------------
+# Common shell options
+#-------------------------------------------------------------------------------
+set -e -o pipefail
+trap 'errorTrap ${LINENO}' ERR
+export PS3=" > "
+
+#-------------------------------------------------------------------------------
+# Defaults
+#-------------------------------------------------------------------------------
+: ${AWS_REGION:="ap-southeast-2"}
+: ${ECSO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}" )/../" && pwd)"}
+
+#-------------------------------------------------------------------------------
+# Functions
+#-------------------------------------------------------------------------------
+assertProject() {
+    if ! [ -f "./.ecso/project.conf" ]; then
+        error "The current directory does not appear to contain an ecso project. Run ecso init first."
+    else
+        . "./.ecso/project.conf"
+    fi
+}
 
 errorTrap() {
     error "Unknown error on line ${1}"
@@ -59,6 +82,17 @@ getECSServiceConsoleUrl() {
     local base="https://${region}.console.aws.amazon.com"
 
     echo "${base}/ecs/home?region=${region}#/clusters/${cluster}/services/${service}/tasks"
+}
+
+loadEnvironmentConfiguration() {
+    local conf="./.ecso/environments/${1}/config.env"
+
+    if [ -f "$conf" ]; then
+        info "Loading environment configuration for ${1} from ${conf}"
+        . "$conf"
+    else
+        warn "No environment configuration for ${1} found at ${conf}"
+    fi
 }
 
 exportStackOutputs() {

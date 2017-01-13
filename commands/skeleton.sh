@@ -24,31 +24,15 @@ EOF
 }
 
 #-------------------------------------------------------------------------------
-# Options
+# Includes
 #-------------------------------------------------------------------------------
-set -e -o pipefail
-trap 'errorTrap ${LINENO}' ERR
-export PS3=" > "
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../" && pwd)/lib/common.sh" && assertProject
 
 #-------------------------------------------------------------------------------
 # Defaults
 #-------------------------------------------------------------------------------
-: ${ECSO_DIR:="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../" && pwd )"}
+: ${CURRENT_AWS_ACCOUNT:="$(aws sts get-caller-identity --output text --query 'Account' 2>/dev/null)"}
 : ${MYVAR:=2}
-
-#-------------------------------------------------------------------------------
-# Includes
-#-------------------------------------------------------------------------------
-. "${ECSO_DIR}/lib/common.sh"
-
-#-------------------------------------------------------------------------------
-# Source the ecso project configuration
-#-------------------------------------------------------------------------------
-if ! [ -f "./.ecso/project.conf" ]; then
-    error "The current directory does not appear to contain an ecso project. Run ecso init first."
-else
-    . "./.ecso/project.conf"
-fi
 
 #-------------------------------------------------------------------------------
 # Parse cli options
